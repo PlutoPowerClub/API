@@ -7,17 +7,13 @@ import modal
 from modal import App, web_endpoint
 import retry_requests
 
-
-
-
-
-app = App("starfish",image=modal.Image.debian_slim().pip_install(
-        "requests",
-        "openmeteo_requests",
-        "requests_cache",
-        "pandas",
-        "retry_requests"
-    ))
+app = App("starfish", image=modal.Image.debian_slim().pip_install(
+    "requests",
+    "openmeteo_requests",
+    "requests_cache",
+    "pandas",
+    "retry_requests"
+))
 
 
 @app.function()
@@ -30,7 +26,17 @@ def get_coords(postcode: str):
     latitude = location.json()['result']['latitude']
     return {"latitude": latitude, "longitude": longitude}
 
-def process_weather(responses):
+
+def __weather_parser(latitude: float, longitude: float, days: int):
+    openmeteo = openmeteo_requests.Client()
+    url = "https://api.open-meteo.com/v1/forecast"
+    params = {
+        "latitude": latitude,
+        "longitude": longitude,
+        "hourly": ["temperature_2m", "cloud_cover", "rain"],
+        "forecast_days": days
+    }
+    responses = openmeteo.weather_api(url, params=params)
     response = responses[0]
     # Process hourly data. The order of variables needs to be the same as requested.
     hourly = response.Hourly()
@@ -47,28 +53,22 @@ def process_weather(responses):
     hourly_dataframe = pd.DataFrame(data=hourly_data).set_index('date')
     result = hourly_dataframe.to_json(orient="index")
     parsed = json.loads(result)
-    return hourly_dataframe, parsed
+    return parsed
+
+
+def __weather(latitude: float, longitude: float, days: int):
+    result = __weather_parser(latitude, longitude, days)
+    return result
 
 
 @app.function()
 @web_endpoint(method="GET")
 def get_weather(latitude: float, longitude: float, days: int):
-    openmeteo = openmeteo_requests.Client()
-    url = "https://api.open-meteo.com/v1/forecast"
-    params = {
-        "latitude": latitude,
-        "longitude": longitude,
-        "hourly": ["temperature_2m", "cloud_cover", "rain"],
-        "forecast_days": days
-    }
-    responses = openmeteo.weather_api(url, params=params)
-    #parsed = process_weather(responses)
-    response = responses
-    print(response)
-    return response
+    result = __weather_parser(latitude, longitude, days)
+    return result
 
-@app.function()
-def battery_capacity():
+
+def __battery_capacity():
     # Example could work with the Tesla powerwall API client https://github.com/jrester/tesla_powerwall?tab=readme-ov-file#readme
     # charge = powerwall.get_energy()
     # capacity = powerwall.get_capacity()
@@ -80,9 +80,10 @@ def battery_capacity():
         status = 'low'
     return status
 
-@app.function()
-def weather_rating(weather_df):
-    if weather_df["cloud_cover"].describe(include='all').loc['50%'] < 0.65:
+
+def __weather_rating(weather_json):
+    weather_df = pd.DataFrame(weather_json).T
+    if weather_df["cloud_cover"].describe(include='all').loc['50%'] > 0.65:
         rating = 'bad'
     else:
         rating = 'good'
@@ -91,22 +92,25 @@ def weather_rating(weather_df):
 
 @app.function()
 @web_endpoint(method="GET")
-def seller(current_consumption, current_generation, weather_df):
-    weather = weather_rating(weather_df)
-    battery_status = battery_capacity()
+def seller(current_consumption, current_generation, latitude, longitude, days):
+    weather = __weather_rating(__weather(latitude, longitude, days))
+    battery_status = __battery_capacity()
     # Dummy trading suggestions
     if current_consumption < current_generation:
         trade = 1
+        hint = ''
     else:
         trade = 0
+        hint = 'Usage is below generation capacity.'
     if trade == 1:
         if weather == 'bad' and battery_status == 'low':
-            trade == 0
+            trade = 0
             hint = "Charging batteries, not selling."
         if weather == 'good' and battery_status == 'high':
-            trade == 1
+            trade = 1
             hint = 'Selling energy at 15p/kWh.'
         if weather == 'bad' and battery_status == 'high':
-            trade == 1
+            trade = 1
             hint = 'Selling energy at 15p/kWh.'
-    return (trade, hint)
+    response = {"trade":trade, "hint": hint}
+    return response
