@@ -146,7 +146,7 @@ def behaviour(latitude, longitude):
 @web_endpoint(method="GET")
 def get_tariff():
 # Get data from Octopus API, and reformat for ApexCharts
-    url = "https://api.octopus.energy/v1/products/GO-VAR-22-10-14/electricity-tariffs/E-1R-GO-VAR-22-10-14-A/standard-unit-rates/?period_from=2024-06-28T00:00Z&period_to=2024-07-02T12"
+    url = "https://api.octopus.energy/v1/products/AGILE-FLEX-22-11-25/electricity-tariffs/E-1R-AGILE-FLEX-22-11-25-C/standard-unit-rates/?period_from=2024-06-26T00:00Z&period_to=2024-07-02T01:29Z"
     response = requests.get(url)
     data = response.json()
     tariff_df = pd.DataFrame(data['results'])
