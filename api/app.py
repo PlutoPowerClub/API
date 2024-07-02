@@ -1,18 +1,23 @@
-import datetime
 import json
 import requests
 import openmeteo_requests
 import requests_cache
 import pandas as pd
-from retry_requests import retry
+import modal
 from modal import App, web_endpoint
+import retry_requests
 
-app = App("starfish")
 
-# Set up the Open-Meteo API client with cache and retry on error
-cache_session = requests_cache.CachedSession('.cache', expire_after=3600)
-retry_session = retry(cache_session, retries=5, backoff_factor=0.2)
-openmeteo = openmeteo_requests.Client(session=retry_session)
+
+
+
+app = App("starfish",image=modal.Image.debian_slim().pip_install(
+        "requests",
+        "openmeteo_requests",
+        "requests_cache",
+        "pandas",
+        "retry_requests"
+    ))
 
 
 @app.function()
@@ -24,7 +29,6 @@ def get_coords(postcode: str):
     longitude = location.json()['result']['longitude']
     latitude = location.json()['result']['latitude']
     return {"latitude": latitude, "longitude": longitude}
-
 
 def process_weather(responses):
     response = responses[0]
@@ -43,12 +47,13 @@ def process_weather(responses):
     hourly_dataframe = pd.DataFrame(data=hourly_data).set_index('date')
     result = hourly_dataframe.to_json(orient="index")
     parsed = json.loads(result)
-    return parsed
+    return hourly_dataframe, parsed
 
 
 @app.function()
 @web_endpoint(method="GET")
 def get_weather(latitude: float, longitude: float, days: int):
+    openmeteo = openmeteo_requests.Client()
     url = "https://api.open-meteo.com/v1/forecast"
     params = {
         "latitude": latitude,
@@ -57,5 +62,51 @@ def get_weather(latitude: float, longitude: float, days: int):
         "forecast_days": days
     }
     responses = openmeteo.weather_api(url, params=params)
-    parsed = process_weather(responses)
-    return parsed
+    #parsed = process_weather(responses)
+    response = responses
+    print(response)
+    return response
+
+@app.function()
+def battery_capacity():
+    # Example could work with the Tesla powerwall API client https://github.com/jrester/tesla_powerwall?tab=readme-ov-file#readme
+    # charge = powerwall.get_energy()
+    # capacity = powerwall.get_capacity()
+    charge = 3  # kWh
+    capacity = 13  # kWh
+    if charge / capacity > 0.7:
+        status = 'high'
+    else:
+        status = 'low'
+    return status
+
+@app.function()
+def weather_rating(weather_df):
+    if weather_df["cloud_cover"].describe(include='all').loc['50%'] < 0.65:
+        rating = 'bad'
+    else:
+        rating = 'good'
+    return rating
+
+
+@app.function()
+@web_endpoint(method="GET")
+def seller(current_consumption, current_generation, weather_df):
+    weather = weather_rating(weather_df)
+    battery_status = battery_capacity()
+    # Dummy trading suggestions
+    if current_consumption < current_generation:
+        trade = 1
+    else:
+        trade = 0
+    if trade == 1:
+        if weather == 'bad' and battery_status == 'low':
+            trade == 0
+            hint = "Charging batteries, not selling."
+        if weather == 'good' and battery_status == 'high':
+            trade == 1
+            hint = 'Selling energy at 15p/kWh.'
+        if weather == 'bad' and battery_status == 'high':
+            trade == 1
+            hint = 'Selling energy at 15p/kWh.'
+    return (trade, hint)
