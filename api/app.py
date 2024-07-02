@@ -146,15 +146,24 @@ def behaviour(latitude, longitude):
 @web_endpoint(method="GET")
 def get_tariff():
 # Get data from Octopus API, and reformat for ApexCharts
-    url = "https://api.octopus.energy/v1/products/GO-VAR-22-10-14/electricity-tariffs/E-1R-GO-VAR-22-10-14-A/standard-unit-rates/?period_from=2024-06-30T00:00Z&period_to=2024-07-02T12"
+    url = "https://api.octopus.energy/v1/products/AGILE-FLEX-22-11-25/electricity-tariffs/E-1R-AGILE-FLEX-22-11-25-C/standard-unit-rates/?period_from=2024-06-26T00:00Z&period_to=2024-07-02T01:29Z"
     response = requests.get(url)
     data = response.json()
     tariff_df = pd.DataFrame(data['results'])
     # tariff_df["time"] = pd.to_datetime(tariff_df["valid_from"], format="%Y-%m-%dT%H:%M:%SZ")
     tariff_df["time"] = pd.to_datetime(tariff_df["valid_from"])
     df_select = tariff_df[["value_inc_vat", "time"]]
-    df_select['time'] = df_select['time'].dt.strftime('%Y-%m-%d %H:%M:%S')
-
-    output = {'datetime': list(df_select["time"]), 'value': list(df_select["value_inc_vat"])}
-    return output
+    result = {'x':list(df_select["time"].astype(int) // 10**9),'y':list(df_select["value_inc_vat"])}
+    new_dict_x = []
+    new_dict_y = []
+    for elem in result['x']:
+        new_dict_x.append(elem)
+    for elem in result['y']:
+        new_dict_y.append(elem)
+    zipped = zip(new_dict_x,new_dict_y)
+    storage_list = []
+    for x,y in zipped:
+        dictionary = {'x': x, 'y': y}
+        storage_list.append(dictionary)
+    return storage_list
 
